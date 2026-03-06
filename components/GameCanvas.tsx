@@ -45,19 +45,19 @@ export default function GameCanvas() {
     gameWidth: 3000,
     gameHeight: 3000,
   });
-  
+
   const [joined, setJoined] = useState(false);
   const [dead, setDead] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
-  const [isMobile, setIsMobile] = useState(() => 
+  const [isMobile, setIsMobile] = useState(() =>
     typeof navigator !== 'undefined' && /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent)
   );
   const [joystick, setJoystick] = useState<{ active: boolean, x: number, y: number, curX: number, curY: number } | null>(null);
   const joystickRef = useRef<{ active: boolean, x: number, y: number, curX: number, curY: number } | null>(null);
-  
+
   // Refs for animation loop
   const stateRef = useRef(gameState);
-  
+
   useEffect(() => {
     stateRef.current = gameState;
   }, [gameState]);
@@ -65,13 +65,17 @@ export default function GameCanvas() {
   useEffect(() => {
     joystickRef.current = joystick;
   }, [joystick]);
-  
+
   const zoomRef = useRef(1);
   const mouseRef = useRef({ x: 0, y: 0 });
 
   useEffect(() => {
     // Connect to Socket.io
-    const newSocket = io();
+    const socketUrl = process.env.NEXT_PUBLIC_SOCKET_URL || '';
+    const newSocket = io(socketUrl, {
+      path: '/socket.io',
+      transports: ['websocket', 'polling'],
+    });
     socketRef.current = newSocket;
 
     newSocket.on('init', (data) => {
@@ -104,14 +108,14 @@ export default function GameCanvas() {
       setGameState(prev => {
         const newPlayers = { ...prev.players };
         const myId = prev.me;
-        
+
         Object.keys(updates).forEach(id => {
           if (newPlayers[id]) {
             // Play eat sound if my score increased
             if (id === myId && updates[id].score && updates[id].score! > newPlayers[id].score) {
               soundManager.playEat();
             }
-            
+
             // Handle boost sound start/stop
             if (id === myId && updates[id].boosting !== undefined) {
               if (updates[id].boosting && !newPlayers[id].boosting) {
@@ -211,12 +215,12 @@ export default function GameCanvas() {
       } else if (!isMobile) {
         const centerX = canvas.width / 2;
         const centerY = canvas.height / 2;
-        
+
         // Adjust mouse input for zoom
         const zoom = zoomRef.current;
         const dx = (mouseRef.current.x - centerX) / zoom;
         const dy = (mouseRef.current.y - centerY) / zoom;
-        
+
         const angle = Math.atan2(dy, dx);
         socket.emit('input', angle);
       }
@@ -241,7 +245,7 @@ export default function GameCanvas() {
 
     const render = () => {
       const state = stateRef.current;
-      
+
       try {
         // Handle resize
         if (canvas.width !== window.innerWidth || canvas.height !== window.innerHeight) {
@@ -262,7 +266,7 @@ export default function GameCanvas() {
           const me = state.players[state.me];
           cameraX = me.x;
           cameraY = me.y;
-          
+
           // Calculate target zoom based on score
           targetZoom = 1 / (1 + me.score / 1500);
           if (targetZoom < 0.3) targetZoom = 0.3; // Min zoom limit
@@ -282,11 +286,11 @@ export default function GameCanvas() {
         ctx.strokeStyle = '#18181b'; // zinc-900
         ctx.lineWidth = 2 / zoom; // Keep grid lines consistent thickness
         const gridSize = 100;
-        
+
         // Adjust visible bounds for zoom
         const visibleWidth = canvas.width / zoom;
         const visibleHeight = canvas.height / zoom;
-        
+
         const startX = Math.floor((cameraX - visibleWidth / 2) / gridSize) * gridSize;
         const startY = Math.floor((cameraY - visibleHeight / 2) / gridSize) * gridSize;
         const endX = startX + visibleWidth + gridSize;
@@ -313,7 +317,7 @@ export default function GameCanvas() {
           // Simple check if food is being pulled by any player (for visual effect)
           let isBeingPulled = false;
           const magnetRadiusSq = 65 * 65;
-          
+
           for (const pId in state.players) {
             const p = state.players[pId];
             const dx = p.x - food.x;
@@ -325,17 +329,17 @@ export default function GameCanvas() {
           }
 
           const baseRadius = 5 + food.value;
-          
+
           if (isBeingPulled) {
             // Manual glow instead of shadowBlur
             const pulse = Math.sin(Date.now() / 100) * 2;
             const glowRadius = (baseRadius + 10 + pulse);
-            
+
             ctx.beginPath();
             ctx.arc(food.x, food.y, glowRadius, 0, Math.PI * 2);
             ctx.fillStyle = 'rgba(255, 255, 255, 0.3)';
             ctx.fill();
-            
+
             ctx.beginPath();
             ctx.arc(food.x, food.y, baseRadius + pulse, 0, Math.PI * 2);
             ctx.fillStyle = food.color;
@@ -356,92 +360,182 @@ export default function GameCanvas() {
           }
         });
 
-      // Draw players
-      Object.values(state.players).forEach(player => {
-        const isMe = player.id === state.me;
-        
-        ctx.save();
-        if (player.paused) {
-          ctx.globalAlpha = 0.5;
-        }
+        // Draw players
+        Object.values(state.players).forEach(player => {
+          const isMe = player.id === state.me;
 
-        // Draw segments
-        for (let i = player.segments.length - 1; i >= 0; i--) {
-          const seg = player.segments[i];
-          
-          // Draw Aura Effect when boosting
+          ctx.save();
+          if (player.paused) {
+            ctx.globalAlpha = 0.5;
+          }
+
+          // Draw segments
+          for (let i = player.segments.length - 1; i >= 0; i--) {
+            const seg = player.segments[i];
+
+            // Draw Aura Effect when boosting
+            if (player.boosting && player.speedMultiplier && player.speedMultiplier > 1.02) {
+              const auraIntensity = Math.min(1, (player.speedMultiplier - 1) * 3);
+              const time = Date.now() / 60;
+
+              ctx.save();
+              ctx.globalCompositeOperation = 'screen';
+
+              // Calculate distance from head for tapering effect
+              const distFromHead = i / player.segments.length;
+              const taper = 1 - (distFromHead * 0.6); // Aura is 100% at head, 40% at tail
+
+              // Turbulent aura layers
+              const layers = 4; // Increased layers
+              for (let j = 0; j < layers; j++) {
+                // Flowing effect: waves move from head to tail with multiple frequencies
+                const waveOffset = (i * 0.5) - (time * (5 + j));
+                const pulse = (Math.sin(waveOffset) + Math.cos(waveOffset * 1.3) + Math.sin(waveOffset * 0.7)) * 6;
+
+                const size = (25 + pulse + (j * 15)) * taper;
+                const opacity = (1.0 / layers) * auraIntensity * taper;
+
+                // Turbulent noise with chromatic-like offset
+                const noiseX = Math.cos(waveOffset * 1.8 + j) * (10 + j * 2);
+                const noiseY = Math.sin(waveOffset * 1.8 + j) * (10 + j * 2);
+
+                ctx.beginPath();
+                ctx.arc(seg.x + noiseX, seg.y + noiseY, size, 0, Math.PI * 2);
+
+                // Shift color slightly for each layer for a "rainbow/heat" effect
+                if (j % 2 === 0) {
+                  ctx.fillStyle = player.color;
+                } else {
+                  // Brighter version of player color
+                  ctx.fillStyle = '#fff';
+                }
+
+                ctx.globalAlpha = opacity * 0.7;
+                ctx.fill();
+
+                // Speed streaks
+                if (i % 3 === 0 && j === 0 && Math.random() > 0.7) {
+                  const streakLen = 40 + Math.random() * 60;
+                  const streakAngle = player.angle + Math.PI + (Math.random() - 0.5) * 0.5;
+                  ctx.beginPath();
+                  ctx.moveTo(seg.x, seg.y);
+                  ctx.lineTo(
+                    seg.x + Math.cos(streakAngle) * streakLen,
+                    seg.y + Math.sin(streakAngle) * streakLen
+                  );
+                  ctx.strokeStyle = '#fff';
+                  ctx.lineWidth = 2;
+                  ctx.globalAlpha = 0.3 * auraIntensity;
+                  ctx.stroke();
+                }
+
+                // Energy sparks (randomly appearing)
+                if (Math.random() > 0.92) {
+                  const sparkX = seg.x + (Math.random() - 0.5) * 50;
+                  const sparkY = seg.y + (Math.random() - 0.5) * 50;
+                  ctx.beginPath();
+                  ctx.arc(sparkX, sparkY, 2.5, 0, Math.PI * 2);
+                  ctx.fillStyle = '#fff';
+                  ctx.globalAlpha = auraIntensity;
+                  ctx.fill();
+                }
+
+                // Inner core
+                if (j === 0) {
+                  ctx.beginPath();
+                  ctx.arc(seg.x + noiseX, seg.y + noiseY, size * 0.35, 0, Math.PI * 2);
+                  ctx.fillStyle = '#ffffff';
+                  ctx.globalAlpha = opacity * 1.0;
+                  ctx.fill();
+                }
+              }
+              ctx.restore();
+            }
+
+            ctx.beginPath();
+            ctx.arc(seg.x, seg.y, 12, 0, Math.PI * 2);
+            ctx.fillStyle = player.color;
+            ctx.fill();
+
+            ctx.strokeStyle = '#000';
+            ctx.lineWidth = 2 / zoom;
+            ctx.stroke();
+          }
+
+          // Draw head
+          // Head Aura - Massive flare with "shockwave" and "start flash"
           if (player.boosting && player.speedMultiplier && player.speedMultiplier > 1.02) {
             const auraIntensity = Math.min(1, (player.speedMultiplier - 1) * 3);
-            const time = Date.now() / 60;
-            
+            const time = Date.now() / 30;
+
             ctx.save();
             ctx.globalCompositeOperation = 'screen';
-            
-            // Calculate distance from head for tapering effect
-            const distFromHead = i / player.segments.length;
-            const taper = 1 - (distFromHead * 0.6); // Aura is 100% at head, 40% at tail
-            
-            // Turbulent aura layers
-            const layers = 4; // Increased layers
-            for (let j = 0; j < layers; j++) {
-              // Flowing effect: waves move from head to tail with multiple frequencies
-              const waveOffset = (i * 0.5) - (time * (5 + j));
-              const pulse = (Math.sin(waveOffset) + Math.cos(waveOffset * 1.3) + Math.sin(waveOffset * 0.7)) * 6;
-              
-              const size = (25 + pulse + (j * 15)) * taper;
-              const opacity = (1.0 / layers) * auraIntensity * taper;
-              
-              // Turbulent noise with chromatic-like offset
-              const noiseX = Math.cos(waveOffset * 1.8 + j) * (10 + j * 2);
-              const noiseY = Math.sin(waveOffset * 1.8 + j) * (10 + j * 2);
-              
+
+            // Boost Start Flash: Large bright circle that fades as speed stabilizes
+            const flashIntensity = Math.max(0, 1 - (player.speedMultiplier - 1) * 2);
+            if (flashIntensity > 0) {
               ctx.beginPath();
-              ctx.arc(seg.x + noiseX, seg.y + noiseY, size, 0, Math.PI * 2);
-              
-              // Shift color slightly for each layer for a "rainbow/heat" effect
+              ctx.arc(player.x, player.y, 120 * flashIntensity, 0, Math.PI * 2);
+              ctx.fillStyle = '#fff';
+              ctx.globalAlpha = flashIntensity * 0.5;
+              ctx.fill();
+            }
+
+            // Shockwave rings
+            for (let k = 0; k < 3; k++) { // Increased rings
+              const ringTime = (time * 0.08 + k * 0.33) % 1;
+              const ringSize = 25 + ringTime * 120;
+              ctx.beginPath();
+              ctx.arc(player.x, player.y, ringSize, 0, Math.PI * 2);
+              ctx.strokeStyle = player.color;
+              ctx.lineWidth = 6 * (1 - ringTime);
+              ctx.globalAlpha = (0.5 * (1 - ringTime)) * auraIntensity;
+              ctx.stroke();
+            }
+
+            // Trailing energy streaks from head
+            for (let m = 0; m < 8; m++) {
+              const streakAngle = player.angle + Math.PI + (Math.random() - 0.5) * 0.8;
+              const streakLen = 60 + Math.random() * 100 * auraIntensity;
+              ctx.beginPath();
+              ctx.moveTo(player.x, player.y);
+              ctx.lineTo(
+                player.x + Math.cos(streakAngle) * streakLen,
+                player.y + Math.sin(streakAngle) * streakLen
+              );
+              ctx.strokeStyle = '#fff';
+              ctx.lineWidth = 3;
+              ctx.globalAlpha = 0.4 * auraIntensity * (1 - m / 8);
+              ctx.stroke();
+            }
+
+            for (let j = 0; j < 6; j++) { // Increased layers
+              const pulse = Math.sin(time + j) * 22;
+              const size = 45 + (j * 18) + pulse;
+
+              const trailX = Math.cos(player.angle) * -j * 12;
+              const trailY = Math.sin(player.angle) * -j * 12;
+
+              const forwardX = Math.cos(player.angle) * 20;
+              const forwardY = Math.sin(player.angle) * 20;
+
+              ctx.beginPath();
+              ctx.arc(player.x + trailX + forwardX, player.y + trailY + forwardY, size, 0, Math.PI * 2);
+
               if (j % 2 === 0) {
                 ctx.fillStyle = player.color;
               } else {
-                // Brighter version of player color
                 ctx.fillStyle = '#fff';
               }
-              
-              ctx.globalAlpha = opacity * 0.7;
+
+              ctx.globalAlpha = (0.6 - j * 0.1) * auraIntensity;
               ctx.fill();
-              
-              // Speed streaks
-              if (i % 3 === 0 && j === 0 && Math.random() > 0.7) {
-                const streakLen = 40 + Math.random() * 60;
-                const streakAngle = player.angle + Math.PI + (Math.random() - 0.5) * 0.5;
-                ctx.beginPath();
-                ctx.moveTo(seg.x, seg.y);
-                ctx.lineTo(
-                  seg.x + Math.cos(streakAngle) * streakLen,
-                  seg.y + Math.sin(streakAngle) * streakLen
-                );
-                ctx.strokeStyle = '#fff';
-                ctx.lineWidth = 2;
-                ctx.globalAlpha = 0.3 * auraIntensity;
-                ctx.stroke();
-              }
 
-              // Energy sparks (randomly appearing)
-              if (Math.random() > 0.92) {
-                const sparkX = seg.x + (Math.random() - 0.5) * 50;
-                const sparkY = seg.y + (Math.random() - 0.5) * 50;
+              if (j < 3) {
                 ctx.beginPath();
-                ctx.arc(sparkX, sparkY, 2.5, 0, Math.PI * 2);
-                ctx.fillStyle = '#fff';
-                ctx.globalAlpha = auraIntensity;
-                ctx.fill();
-              }
-
-              // Inner core
-              if (j === 0) {
-                ctx.beginPath();
-                ctx.arc(seg.x + noiseX, seg.y + noiseY, size * 0.35, 0, Math.PI * 2);
+                ctx.arc(player.x + trailX + forwardX, player.y + trailY + forwardY, size * 0.4, 0, Math.PI * 2);
                 ctx.fillStyle = '#ffffff';
-                ctx.globalAlpha = opacity * 1.0;
+                ctx.globalAlpha = 0.8 * auraIntensity;
                 ctx.fill();
               }
             }
@@ -449,150 +543,60 @@ export default function GameCanvas() {
           }
 
           ctx.beginPath();
-          ctx.arc(seg.x, seg.y, 12, 0, Math.PI * 2);
+          ctx.arc(player.x, player.y, 15, 0, Math.PI * 2);
           ctx.fillStyle = player.color;
           ctx.fill();
-          
-          ctx.strokeStyle = '#000';
+
+          if (player.boosting) {
+            ctx.shadowBlur = 20 / zoom;
+            ctx.shadowColor = '#fff';
+          }
+
+          ctx.strokeStyle = '#fff';
           ctx.lineWidth = 2 / zoom;
           ctx.stroke();
-        }
+          ctx.shadowBlur = 0;
 
-        // Draw head
-        // Head Aura - Massive flare with "shockwave" and "start flash"
-        if (player.boosting && player.speedMultiplier && player.speedMultiplier > 1.02) {
-          const auraIntensity = Math.min(1, (player.speedMultiplier - 1) * 3);
-          const time = Date.now() / 30;
-          
+          // Draw eyes
+          const eyeOffset = 8;
+          const eyeRadius = 4;
+          const angle = player.angle || 0;
+
           ctx.save();
-          ctx.globalCompositeOperation = 'screen';
-          
-          // Boost Start Flash: Large bright circle that fades as speed stabilizes
-          const flashIntensity = Math.max(0, 1 - (player.speedMultiplier - 1) * 2);
-          if (flashIntensity > 0) {
-            ctx.beginPath();
-            ctx.arc(player.x, player.y, 120 * flashIntensity, 0, Math.PI * 2);
-            ctx.fillStyle = '#fff';
-            ctx.globalAlpha = flashIntensity * 0.5;
-            ctx.fill();
-          }
+          ctx.translate(player.x, player.y);
+          ctx.rotate(angle);
 
-          // Shockwave rings
-          for (let k = 0; k < 3; k++) { // Increased rings
-            const ringTime = (time * 0.08 + k * 0.33) % 1;
-            const ringSize = 25 + ringTime * 120;
-            ctx.beginPath();
-            ctx.arc(player.x, player.y, ringSize, 0, Math.PI * 2);
-            ctx.strokeStyle = player.color;
-            ctx.lineWidth = 6 * (1 - ringTime);
-            ctx.globalAlpha = (0.5 * (1 - ringTime)) * auraIntensity;
-            ctx.stroke();
-          }
+          // Left eye
+          ctx.beginPath();
+          ctx.arc(eyeOffset, -eyeOffset, eyeRadius, 0, Math.PI * 2);
+          ctx.fillStyle = '#fff';
+          ctx.fill();
+          ctx.beginPath();
+          ctx.arc(eyeOffset + 1, -eyeOffset, eyeRadius / 2, 0, Math.PI * 2);
+          ctx.fillStyle = '#000';
+          ctx.fill();
 
-          // Trailing energy streaks from head
-          for (let m = 0; m < 8; m++) {
-            const streakAngle = player.angle + Math.PI + (Math.random() - 0.5) * 0.8;
-            const streakLen = 60 + Math.random() * 100 * auraIntensity;
-            ctx.beginPath();
-            ctx.moveTo(player.x, player.y);
-            ctx.lineTo(
-              player.x + Math.cos(streakAngle) * streakLen,
-              player.y + Math.sin(streakAngle) * streakLen
-            );
-            ctx.strokeStyle = '#fff';
-            ctx.lineWidth = 3;
-            ctx.globalAlpha = 0.4 * auraIntensity * (1 - m/8);
-            ctx.stroke();
-          }
+          // Right eye
+          ctx.beginPath();
+          ctx.arc(eyeOffset, eyeOffset, eyeRadius, 0, Math.PI * 2);
+          ctx.fillStyle = '#fff';
+          ctx.fill();
+          ctx.beginPath();
+          ctx.arc(eyeOffset + 1, eyeOffset, eyeRadius / 2, 0, Math.PI * 2);
+          ctx.fillStyle = '#000';
+          ctx.fill();
 
-          for (let j = 0; j < 6; j++) { // Increased layers
-            const pulse = Math.sin(time + j) * 22;
-            const size = 45 + (j * 18) + pulse;
-            
-            const trailX = Math.cos(player.angle) * -j * 12;
-            const trailY = Math.sin(player.angle) * -j * 12;
-            
-            const forwardX = Math.cos(player.angle) * 20;
-            const forwardY = Math.sin(player.angle) * 20;
-            
-            ctx.beginPath();
-            ctx.arc(player.x + trailX + forwardX, player.y + trailY + forwardY, size, 0, Math.PI * 2);
-            
-            if (j % 2 === 0) {
-              ctx.fillStyle = player.color;
-            } else {
-              ctx.fillStyle = '#fff';
-            }
-            
-            ctx.globalAlpha = (0.6 - j * 0.1) * auraIntensity;
-            ctx.fill();
-            
-            if (j < 3) {
-              ctx.beginPath();
-              ctx.arc(player.x + trailX + forwardX, player.y + trailY + forwardY, size * 0.4, 0, Math.PI * 2);
-              ctx.fillStyle = '#ffffff';
-              ctx.globalAlpha = 0.8 * auraIntensity;
-              ctx.fill();
-            }
-          }
           ctx.restore();
-        }
 
-        ctx.beginPath();
-        ctx.arc(player.x, player.y, 15, 0, Math.PI * 2);
-        ctx.fillStyle = player.color;
-        ctx.fill();
-        
-        if (player.boosting) {
-          ctx.shadowBlur = 20 / zoom;
-          ctx.shadowColor = '#fff';
-        }
-        
-        ctx.strokeStyle = '#fff';
-        ctx.lineWidth = 2 / zoom;
-        ctx.stroke();
-        ctx.shadowBlur = 0;
+          // Draw name
+          ctx.fillStyle = '#fff';
+          const fontSize = 14 / zoom;
+          ctx.font = `${fontSize}px Inter, sans-serif`;
+          ctx.textAlign = 'center';
+          ctx.fillText(player.name + (player.paused ? ' (Dijeda)' : ''), player.x, player.y - (25 / zoom));
 
-        // Draw eyes
-        const eyeOffset = 8;
-        const eyeRadius = 4;
-        const angle = player.angle || 0;
-        
-        ctx.save();
-        ctx.translate(player.x, player.y);
-        ctx.rotate(angle);
-        
-        // Left eye
-        ctx.beginPath();
-        ctx.arc(eyeOffset, -eyeOffset, eyeRadius, 0, Math.PI * 2);
-        ctx.fillStyle = '#fff';
-        ctx.fill();
-        ctx.beginPath();
-        ctx.arc(eyeOffset + 1, -eyeOffset, eyeRadius / 2, 0, Math.PI * 2);
-        ctx.fillStyle = '#000';
-        ctx.fill();
-
-        // Right eye
-        ctx.beginPath();
-        ctx.arc(eyeOffset, eyeOffset, eyeRadius, 0, Math.PI * 2);
-        ctx.fillStyle = '#fff';
-        ctx.fill();
-        ctx.beginPath();
-        ctx.arc(eyeOffset + 1, eyeOffset, eyeRadius / 2, 0, Math.PI * 2);
-        ctx.fillStyle = '#000';
-        ctx.fill();
-        
-        ctx.restore();
-
-        // Draw name
-        ctx.fillStyle = '#fff';
-        const fontSize = 14 / zoom;
-        ctx.font = `${fontSize}px Inter, sans-serif`;
-        ctx.textAlign = 'center';
-        ctx.fillText(player.name + (player.paused ? ' (Dijeda)' : ''), player.x, player.y - (25 / zoom));
-        
-        ctx.restore();
-      });
+          ctx.restore();
+        });
 
       } finally {
         ctx.restore();
@@ -671,7 +675,7 @@ export default function GameCanvas() {
   };
 
   return (
-    <div 
+    <div
       className="relative w-full h-screen overflow-hidden bg-zinc-950 touch-none"
       onTouchStart={handleTouchStart}
       onTouchMove={handleTouchMove}
@@ -681,13 +685,13 @@ export default function GameCanvas() {
         ref={canvasRef}
         className="block w-full h-full"
       />
-      
+
       {!joined && !dead && (
         <JoinScreen onJoin={handleJoin} />
       )}
 
       {dead && (
-        <motion.div 
+        <motion.div
           initial={{ opacity: 0, scale: 0.9 }}
           animate={{ opacity: 1, scale: 1 }}
           className="fixed inset-0 flex items-center justify-center bg-zinc-950/80 backdrop-blur-sm z-50"
@@ -714,7 +718,7 @@ export default function GameCanvas() {
       )}
 
       {showSettings && (
-        <motion.div 
+        <motion.div
           initial={{ opacity: 0, scale: 0.9 }}
           animate={{ opacity: 1, scale: 1 }}
           className="fixed inset-0 flex items-center justify-center bg-zinc-950/80 backdrop-blur-sm z-50"
@@ -741,15 +745,15 @@ export default function GameCanvas() {
       )}
 
       {joystick && (
-        <div 
+        <div
           className="fixed pointer-events-none z-30"
           style={{ left: joystick.x - 50, top: joystick.y - 50 }}
         >
           <div className="w-[100px] h-[100px] rounded-full border-2 border-white/20 bg-white/5 flex items-center justify-center">
-            <div 
+            <div
               className="w-10 h-10 rounded-full bg-emerald-500/50 shadow-[0_0_15px_rgba(16,185,129,0.5)]"
-              style={{ 
-                transform: `translate(${Math.max(-40, Math.min(40, joystick.curX - joystick.x))}px, ${Math.max(-40, Math.min(40, joystick.curY - joystick.y))}px)` 
+              style={{
+                transform: `translate(${Math.max(-40, Math.min(40, joystick.curX - joystick.x))}px, ${Math.max(-40, Math.min(40, joystick.curY - joystick.y))}px)`
               }}
             />
           </div>
@@ -767,12 +771,12 @@ export default function GameCanvas() {
       )}
 
       {joined && !showSettings && (
-        <Leaderboard 
-          players={Object.values(gameState.players)} 
-          currentPlayerId={gameState.me} 
+        <Leaderboard
+          players={Object.values(gameState.players)}
+          currentPlayerId={gameState.me}
         />
       )}
-      
+
       {joined && !showSettings && gameState.me && gameState.players[gameState.me] && (
         <>
           <div className="fixed bottom-4 left-4 bg-zinc-950/80 backdrop-blur-md border border-zinc-800/50 p-4 rounded-2xl shadow-xl z-40">
@@ -781,7 +785,7 @@ export default function GameCanvas() {
               {Math.floor(gameState.players[gameState.me].score)}
             </div>
           </div>
-          
+
           <button
             onClick={handlePause}
             className="fixed top-4 left-4 bg-zinc-950/80 backdrop-blur-md border border-zinc-800/50 p-3 rounded-2xl shadow-xl z-40 text-zinc-300 hover:text-white hover:bg-zinc-800 transition-all"
