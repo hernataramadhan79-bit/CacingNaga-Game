@@ -73,8 +73,9 @@ export default function GameCanvas() {
     // Connect to Socket.io
     const socketUrl = process.env.NEXT_PUBLIC_SOCKET_URL || '';
     const newSocket = io(socketUrl, {
-      path: '/socket.io',
-      transports: ['websocket', 'polling'],
+      transports: ['polling', 'websocket'], // Coba polling dulu, baru upgrade ke websocket
+      reconnectionAttempts: 5,
+      reconnectionDelay: 1000,
     });
     socketRef.current = newSocket;
 

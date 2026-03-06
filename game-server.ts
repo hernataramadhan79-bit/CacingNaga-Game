@@ -78,9 +78,11 @@ app.get('/health', (req, res) => {
 const httpServer = createServer(app);
 const io = new Server(httpServer, {
   cors: {
-    origin: '*', // In production, you might want to restrict this to your frontend URL
-    methods: ['GET', 'POST']
+    origin: "*",
+    methods: ["GET", "POST"],
+    credentials: true
   },
+  allowEIO3: true // Menambah kompatibilitas dengan versi client lama jika ada
 });
 
 io.on('connection', (socket) => {
