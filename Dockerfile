@@ -14,4 +14,4 @@ RUN npm install -g tsx
 EXPOSE 7860
 ENV PORT=7860
 
-CMD ["tsx", "game-server.ts"]
+CMD ["npx", "tsx", "game-server.ts"]

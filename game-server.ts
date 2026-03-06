@@ -373,6 +373,14 @@ setInterval(() => {
 
 }, 1000 / 30);
 
-httpServer.listen(PORT, () => {
-  console.log(`Backend server ready on port ${PORT}`);
+// PENTING: Gunakan '0.0.0.0' agar bisa diakses dari luar container Docker
+const HOST = '0.0.0.0';
+
+httpServer.listen(Number(PORT), HOST, () => {
+  console.log(`=========================================`);
+  console.log(`🚀 SERVER RUNNING!`);
+  console.log(`📍 Port: ${PORT}`);
+  console.log(`📍 Host: ${HOST}`);
+  console.log(`📅 Time: ${new Date().toLocaleString()}`);
+  console.log(`=========================================`);
 });
